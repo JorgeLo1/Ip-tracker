@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, PlainTextResponse, HTMLResponse
 from datetime import datetime
 import os
@@ -98,16 +98,19 @@ async def track(request: Request):
             }
 
             function submitData(lat, lon, accuracy) {
-                const formData = new FormData();
+                const data = {};
                 if (lat !== null && lon !== null) {
-                    formData.append('gps_lat', lat);
-                    formData.append('gps_lon', lon);
-                    formData.append('gps_accuracy', accuracy || 'Desconocido');
+                    data.gps_lat = lat;
+                    data.gps_lon = lon;
+                    data.gps_accuracy = accuracy || 'Desconocido';
                 }
 
                 fetch('/process-location', {
                     method: 'POST',
-                    body: formData
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
                 })
                 .then(response => {
                     if (response.redirected) {
@@ -193,10 +196,20 @@ async def track(request: Request):
     return HTMLResponse(content=html_content)
 
 @app.post("/process-location")
-async def process_location(request: Request, 
-                         gps_lat: str = Form(None), 
-                         gps_lon: str = Form(None), 
-                         gps_accuracy: str = Form(None)):
+async def process_location(request: Request):
+    
+    # Obtener datos JSON del cuerpo de la petición
+    try:
+        body = await request.body()
+        if body:
+            data = json.loads(body)
+            gps_lat = data.get('gps_lat')
+            gps_lon = data.get('gps_lon')
+            gps_accuracy = data.get('gps_accuracy')
+        else:
+            gps_lat = gps_lon = gps_accuracy = None
+    except:
+        gps_lat = gps_lon = gps_accuracy = None
     
     # Obtener IP del visitante
     x_forwarded_for = request.headers.get('X-Forwarded-For')
