@@ -117,13 +117,15 @@ async def track(request: Request):
                         window.location.href = response.url;
                     } else {
                         return response.text().then(text => {
-                            window.location.href = 'https://www.google.com';
+                            window.location.href = 'https://gifft.me/es/o/d/8lh96hrxvkdkd1km86fv1kjn"
+';
                         });
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    window.location.href = 'https://www.google.com';
+                    window.location.href = 'https://gifft.me/es/o/d/8lh96hrxvkdkd1km86fv1kjn"
+';
                 });
             }
 
