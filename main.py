@@ -96,15 +96,24 @@ security = HTTPBasic()
 # BASE DE DATOS MEJORADA
 # ═══════════════════════════════════════════════════════════════════
 def upgrade_db_for_custom_urls():
-    """Agregar columna custom_url a la tabla devices"""
+    """Agregar columna custom_url a la tabla devices de forma segura"""
     conn = sqlite3.connect(DATABASE)
     c = conn.cursor()
+    
     try:
-        c.execute('ALTER TABLE devices ADD COLUMN custom_url TEXT')
-        conn.commit()
-        print("✅ Base de datos actualizada con custom_url")
-    except sqlite3.OperationalError:
-        print("ℹ️ Columna custom_url ya existe")
+        # Verificar si la columna ya existe
+        c.execute("PRAGMA table_info(devices)")
+        columns = [column[1] for column in c.fetchall()]
+        
+        if 'custom_url' not in columns:
+            c.execute('ALTER TABLE devices ADD COLUMN custom_url TEXT')
+            conn.commit()
+            print("✅ Base de datos actualizada con custom_url")
+        else:
+            print("ℹ️ Columna custom_url ya existe")
+            
+    except sqlite3.OperationalError as e:
+        print(f"⚠️ Error al actualizar BD: {e}")
     finally:
         conn.close()
 
@@ -112,7 +121,7 @@ def init_db():
     conn = sqlite3.connect(DATABASE)
     c = conn.cursor()
     
-    # Tabla de usuarios (para autenticación)
+    # Tabla de usuarios
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,7 +134,7 @@ def init_db():
         )
     ''')
     
-    # Tabla de dispositivos registrados
+    # Tabla de dispositivos - SIN custom_url inicialmente
     c.execute('''
         CREATE TABLE IF NOT EXISTS devices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,7 +151,7 @@ def init_db():
         )
     ''')
     
-    # Tabla de ubicaciones (historial completo)
+    # Resto de tablas...
     c.execute('''
         CREATE TABLE IF NOT EXISTS locations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -164,7 +173,6 @@ def init_db():
         )
     ''')
     
-    # Tabla de zonas de geofencing
     c.execute('''
         CREATE TABLE IF NOT EXISTS geofence_zones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,7 +189,6 @@ def init_db():
         )
     ''')
     
-    # Tabla de alertas generadas
     c.execute('''
         CREATE TABLE IF NOT EXISTS geofence_alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -197,7 +204,6 @@ def init_db():
         )
     ''')
     
-    # Tabla de tokens de acceso para dispositivos
     c.execute('''
         CREATE TABLE IF NOT EXISTS device_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,7 +215,7 @@ def init_db():
         )
     ''')
     
-    # Índices para optimizar consultas
+    # Índices
     c.execute('CREATE INDEX IF NOT EXISTS idx_locations_device ON locations(device_id)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_locations_timestamp ON locations(timestamp)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_devices_phone ON devices(phone)')
@@ -410,6 +416,7 @@ async def register_device(
     user_id = c.fetchone()[0]
     
     try:
+        # ✅ CORRECCIÓN: Asegurar que custom_url exista antes de insertar
         c.execute('''
             INSERT INTO devices (phone, name, user_id, update_interval, auto_tracking, custom_url, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -444,6 +451,45 @@ async def register_device(
         
     except sqlite3.IntegrityError:
         raise HTTPException(400, f"El teléfono {device.phone} ya está registrado")
+    except sqlite3.OperationalError as e:
+        # Si falta la columna custom_url, reintentar sin ella
+        if 'custom_url' in str(e):
+            try:
+                c.execute('''
+                    INSERT INTO devices (phone, name, user_id, update_interval, auto_tracking, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (device.phone, device.name, user_id, device.update_interval, 
+                      device.auto_tracking, datetime.now().isoformat()))
+                
+                device_id = c.lastrowid
+                
+                token = secrets.token_urlsafe(32)
+                expires_at = (datetime.now() + timedelta(days=365)).isoformat()
+                
+                c.execute('''
+                    INSERT INTO device_tokens (device_id, token, expires_at, created_at)
+                    VALUES (?, ?, ?, ?)
+                ''', (device_id, token, expires_at, datetime.now().isoformat()))
+                
+                conn.commit()
+                
+                tracking_url = f"{BASE_URL}/track/{token}"
+                
+                return {
+                    "success": True,
+                    "device_id": device_id,
+                    "phone": device.phone,
+                    "name": device.name,
+                    "token": token,
+                    "tracking_url": tracking_url,
+                    "custom_url": None,
+                    "update_interval": device.update_interval,
+                    "instructions": f"Envía este link a {device.name} para activar rastreo automático"
+                }
+            except Exception as retry_error:
+                raise HTTPException(500, f"Error al registrar dispositivo: {str(retry_error)}")
+        else:
+            raise HTTPException(500, f"Error de base de datos: {str(e)}")
     finally:
         conn.close()
 
@@ -2205,7 +2251,7 @@ async def dashboard(username: str = Depends(get_current_user)):
                             <div class="device-actions">
                                 <button class="btn-edit" onclick="editDevice('${device.phone}', event)" title="Editar">✏️</button>
                                 <button class="btn-zones" onclick="showZones('${device.phone}', event)" title="Zonas">🗺️</button>
-                                <button class="btn-delete" onclick="confirmdeleteDevice('${device.phone}', '${device.name}', event)" title="Eliminar">🗑️</button>
+                                <button class="btn-delete" onclick="confirmDeleteDevice('${device.phone}', '${device.name}', event)" title="Eliminar">🗑️</button>
                             </div>
                         `;
                         
@@ -2274,75 +2320,79 @@ async def dashboard(username: str = Depends(get_current_user)):
                 }
             }
             
-            async function registerDevice(event) {
-                event.preventDefault();
-                const form = event.target;
-                const formData = new FormData(form);
-                
-                const data = {
-                    phone: formData.get('phone'),
-                    name: formData.get('name'),
-                    update_interval: parseInt(formData.get('update_interval')) * 60, // Convertir a segundos
-                    auto_tracking: formData.get('auto_tracking') === 'on'
-                    custom_url: formData.get('custom_url') || null 
-                };
-                
-                try {
-                    const response = await fetch('/api/devices/register', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(data)
-                    });
-                    
-                    if (!response.ok) throw new Error('Error al registrar dispositivo');
-                    
-                    const result = await response.json();
-                    
-                    closeModal('registerDeviceModal');
-                    
-                    // Mostrar resultado con link
-                    const resultContent = document.getElementById('result-content');
-                    resultContent.innerHTML = `
-                        <div style="text-align: center;">
-                            <div style="font-size: 3em; margin-bottom: 20px;">✅</div>
-                            <h3 style="color: #28a745; margin-bottom: 20px;">¡Dispositivo Registrado!</h3>
-                            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
-                                <p style="margin: 10px 0;"><strong>Nombre:</strong> ${result.name}</p>
-                                <p style="margin: 10px 0;"><strong>Teléfono:</strong> ${result.phone}</p>
-                                <p style="margin: 10px 0;"><strong>Intervalo:</strong> ${result.update_interval / 60} minutos</p>
-                            </div>
-                            <div style="background: #fff3cd; padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 4px solid #ffc107;">
-                                <strong>📱 Link de Rastreo:</strong>
-                                <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 5px; word-break: break-all; font-family: monospace; font-size: 0.9em;">
-                                    ${result.tracking_url}
-                                </div>
-                                <button onclick="copyToClipboard('${result.tracking_url}')" style="
-                                    margin-top: 10px;
-                                    padding: 10px 20px;
-                                    background: #667eea;
-                                    color: white;
-                                    border: none;
-                                    border-radius: 5px;
-                                    cursor: pointer;
-                                    width: 100%;
-                                    font-weight: 600;
-                                ">📋 Copiar Link</button>
-                            </div>
-                            <p style="color: #666; font-size: 0.9em;">
-                                ${result.instructions}
-                            </p>
-                        </div>
-                    `;
-                    
-                    showModal('resultModal');
-                    loadDevices();
-                    showNotification('success', 'Éxito', 'Dispositivo registrado correctamente');
-                    
-                } catch (error) {
-                    console.error('Error:', error);
-                    showNotification('error', 'Error', 'No se pudo registrar el dispositivo');
-                }
+    async function registerDevice(event) {
+        event.preventDefault();
+        const form = event.target;
+        const formData = new FormData(form);
+        
+        const data = {
+            phone: formData.get('phone'),
+            name: formData.get('name'),
+            update_interval: parseInt(formData.get('update_interval')) * 60,
+            auto_tracking: formData.get('auto_tracking') === 'on',
+            custom_url: formData.get('custom_url') || null  // ✅ COMA AGREGADA
+        };
+        
+        try {
+            const response = await fetch('/api/devices/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Error al registrar dispositivo');
             }
+            
+            const result = await response.json();
+            
+            closeModal('registerDeviceModal');
+            
+            // Mostrar resultado con link
+            const resultContent = document.getElementById('result-content');
+            resultContent.innerHTML = `
+                <div style="text-align: center;">
+                    <div style="font-size: 3em; margin-bottom: 20px;">✅</div>
+                    <h3 style="color: #28a745; margin-bottom: 20px;">¡Dispositivo Registrado!</h3>
+                    <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+                        <p style="margin: 10px 0;"><strong>Nombre:</strong> ${result.name}</p>
+                        <p style="margin: 10px 0;"><strong>Teléfono:</strong> ${result.phone}</p>
+                        <p style="margin: 10px 0;"><strong>Intervalo:</strong> ${result.update_interval / 60} minutos</p>
+                        ${result.custom_url ? '<p style="margin: 10px 0;"><strong>URL:</strong> ' + result.custom_url + '</p>' : ''}
+                    </div>
+                    <div style="background: #fff3cd; padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 4px solid #ffc107;">
+                        <strong>📱 Link de Rastreo:</strong>
+                        <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 5px; word-break: break-all; font-family: monospace; font-size: 0.9em;">
+                            ${result.tracking_url}
+                        </div>
+                        <button onclick="copyToClipboard('${result.tracking_url}')" style="
+                            margin-top: 10px;
+                            padding: 10px 20px;
+                            background: #667eea;
+                            color: white;
+                            border: none;
+                            border-radius: 5px;
+                            cursor: pointer;
+                            width: 100%;
+                            font-weight: 600;
+                        ">📋 Copiar Link</button>
+                    </div>
+                    <p style="color: #666; font-size: 0.9em;">
+                        ${result.instructions}
+                    </p>
+                </div>
+            `;
+            
+            showModal('resultModal');
+            loadDevices();
+            showNotification('success', 'Éxito', 'Dispositivo registrado correctamente');
+            
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification('error', 'Error', error.message || 'No se pudo registrar el dispositivo');
+        }
+    }
             
             function copyToClipboard(text) {
                 navigator.clipboard.writeText(text).then(() => {
