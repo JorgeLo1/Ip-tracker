@@ -1191,7 +1191,7 @@ async def tracking_page(token: str):
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(username: str = Depends(get_current_user)):
-    """Dashboard interactivo con mapa de ubicaciones en tiempo real"""
+    """Dashboard interactivo con gestión completa de funciones"""
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html>
@@ -1213,21 +1213,22 @@ async def dashboard(username: str = Depends(get_current_user)):
                 color: white;
                 padding: 20px;
                 box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
             }
-            .header h1 {
-                margin: 0;
-                font-size: 2em;
-            }
-            .header .subtitle {
-                opacity: 0.9;
-                margin-top: 5px;
+            .header h1 { margin: 0; font-size: 2em; }
+            .header .subtitle { opacity: 0.9; margin-top: 5px; }
+            .header-actions {
+                display: flex;
+                gap: 10px;
             }
             .container {
                 display: grid;
-                grid-template-columns: 300px 1fr;
+                grid-template-columns: 320px 1fr;
                 gap: 20px;
                 padding: 20px;
-                max-width: 1800px;
+                max-width: 1900px;
                 margin: 0 auto;
                 height: calc(100vh - 100px);
             }
@@ -1237,12 +1238,16 @@ async def dashboard(username: str = Depends(get_current_user)):
                 padding: 20px;
                 box-shadow: 0 2px 10px rgba(0,0,0,0.1);
                 overflow-y: auto;
+                max-height: calc(100vh - 140px);
             }
             .sidebar h3 {
                 color: #667eea;
                 margin-bottom: 15px;
                 padding-bottom: 10px;
                 border-bottom: 2px solid #667eea;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
             }
             .device-card {
                 background: #f8f9fa;
@@ -1252,6 +1257,7 @@ async def dashboard(username: str = Depends(get_current_user)):
                 cursor: pointer;
                 transition: all 0.3s;
                 border-left: 4px solid #667eea;
+                position: relative;
             }
             .device-card:hover {
                 background: #e9ecef;
@@ -1269,6 +1275,7 @@ async def dashboard(username: str = Depends(get_current_user)):
             .device-info {
                 font-size: 0.9em;
                 opacity: 0.8;
+                margin: 3px 0;
             }
             .device-status {
                 display: inline-block;
@@ -1278,14 +1285,27 @@ async def dashboard(username: str = Depends(get_current_user)):
                 font-weight: 600;
                 margin-top: 5px;
             }
-            .status-active {
-                background: #28a745;
-                color: white;
+            .status-active { background: #28a745; color: white; }
+            .status-inactive { background: #dc3545; color: white; }
+            .device-actions {
+                display: flex;
+                gap: 5px;
+                margin-top: 10px;
             }
-            .status-inactive {
-                background: #dc3545;
-                color: white;
+            .device-actions button {
+                flex: 1;
+                padding: 5px;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 0.8em;
+                font-weight: 600;
+                transition: all 0.2s;
             }
+            .btn-edit { background: #ffc107; color: #000; }
+            .btn-delete { background: #dc3545; color: white; }
+            .btn-zones { background: #17a2b8; color: white; }
+            .device-actions button:hover { opacity: 0.8; transform: scale(1.05); }
             .main-content {
                 display: grid;
                 grid-template-rows: auto 1fr;
@@ -1303,106 +1323,326 @@ async def dashboard(username: str = Depends(get_current_user)):
                 box-shadow: 0 2px 10px rgba(0,0,0,0.1);
                 text-align: center;
             }
-            .stat-icon {
-                font-size: 2.5em;
-                margin-bottom: 10px;
-            }
+            .stat-icon { font-size: 2.5em; margin-bottom: 10px; }
             .stat-value {
                 font-size: 2em;
                 font-weight: bold;
                 color: #667eea;
                 margin-bottom: 5px;
             }
-            .stat-label {
-                color: #666;
-                font-size: 0.9em;
-            }
+            .stat-label { color: #666; font-size: 0.9em; }
             #map {
                 height: 100%;
                 border-radius: 15px;
                 box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             }
-            .leaflet-popup-content {
-                margin: 15px;
-            }
-            .popup-title {
-                font-weight: 600;
-                font-size: 1.1em;
-                color: #667eea;
-                margin-bottom: 10px;
-            }
-            .popup-info {
-                margin: 5px 0;
-                font-size: 0.9em;
-            }
-            .alerts-panel {
+            
+            /* MODALES */
+            .modal {
+                display: none;
                 position: fixed;
-                top: 100px;
-                right: 20px;
-                width: 300px;
-                max-height: 400px;
+                z-index: 2000;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.5);
+                animation: fadeIn 0.3s;
+            }
+            .modal.show { display: flex; align-items: center; justify-content: center; }
+            @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
+            }
+            .modal-content {
                 background: white;
-                border-radius: 15px;
+                border-radius: 20px;
+                padding: 30px;
+                max-width: 500px;
+                width: 90%;
+                max-height: 90vh;
+                overflow-y: auto;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+                animation: slideUp 0.3s;
+            }
+            @keyframes slideUp {
+                from { transform: translateY(50px); opacity: 0; }
+                to { transform: translateY(0); opacity: 1; }
+            }
+            .modal-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+                padding-bottom: 15px;
+                border-bottom: 2px solid #667eea;
+            }
+            .modal-header h2 {
+                color: #667eea;
+                margin: 0;
+            }
+            .close-modal {
+                background: none;
+                border: none;
+                font-size: 2em;
+                cursor: pointer;
+                color: #999;
+                line-height: 1;
+            }
+            .close-modal:hover { color: #333; }
+            .form-group {
+                margin-bottom: 20px;
+            }
+            .form-group label {
+                display: block;
+                margin-bottom: 8px;
+                color: #333;
+                font-weight: 600;
+            }
+            .form-group input, .form-group select, .form-group textarea {
+                width: 100%;
+                padding: 12px;
+                border: 2px solid #e9ecef;
+                border-radius: 8px;
+                font-size: 1em;
+                transition: all 0.3s;
+            }
+            .form-group input:focus, .form-group select:focus {
+                outline: none;
+                border-color: #667eea;
+                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            }
+            .form-group small {
+                display: block;
+                margin-top: 5px;
+                color: #666;
+                font-size: 0.85em;
+            }
+            .form-row {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 15px;
+            }
+            .checkbox-group {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .checkbox-group input[type="checkbox"] {
+                width: auto;
+                cursor: pointer;
+            }
+            .btn {
+                padding: 12px 25px;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-weight: 600;
+                font-size: 1em;
+                transition: all 0.3s;
+            }
+            .btn-primary {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                width: 100%;
+            }
+            .btn-primary:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            }
+            .btn-secondary {
+                background: #6c757d;
+                color: white;
+            }
+            .btn-success {
+                background: #28a745;
+                color: white;
+            }
+            .btn-danger {
+                background: #dc3545;
+                color: white;
+            }
+            .btn-warning {
+                background: #ffc107;
+                color: #000;
+            }
+            .btn-info {
+                background: #17a2b8;
+                color: white;
+            }
+            .btn-group {
+                display: flex;
+                gap: 10px;
+                margin-top: 20px;
+            }
+            .btn-group button {
+                flex: 1;
+            }
+            
+            /* ALERTAS/NOTIFICACIONES */
+            .notification {
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: white;
+                padding: 20px 25px;
+                border-radius: 10px;
                 box-shadow: 0 5px 20px rgba(0,0,0,0.2);
-                padding: 20px;
-                z-index: 1000;
+                z-index: 3000;
+                min-width: 300px;
+                animation: slideInRight 0.3s;
                 display: none;
             }
-            .alerts-panel.show {
-                display: block;
+            .notification.show { display: block; }
+            @keyframes slideInRight {
+                from { transform: translateX(400px); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
             }
-            .alert-item {
-                padding: 10px;
-                margin-bottom: 10px;
+            .notification.success { border-left: 5px solid #28a745; }
+            .notification.error { border-left: 5px solid #dc3545; }
+            .notification.warning { border-left: 5px solid #ffc107; }
+            .notification.info { border-left: 5px solid #17a2b8; }
+            .notification-title {
+                font-weight: 600;
+                margin-bottom: 5px;
+                font-size: 1.1em;
+            }
+            .notification-message {
+                color: #666;
+                font-size: 0.9em;
+            }
+            
+            /* LISTA DE ZONAS */
+            .zone-list {
+                max-height: 300px;
+                overflow-y: auto;
+            }
+            .zone-item {
+                background: #f8f9fa;
+                padding: 15px;
                 border-radius: 8px;
-                border-left: 4px solid #ffc107;
+                margin-bottom: 10px;
+                border-left: 4px solid #667eea;
+            }
+            .zone-item.inactive {
+                opacity: 0.6;
+                border-left-color: #999;
+            }
+            .zone-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 10px;
+            }
+            .zone-name {
+                font-weight: 600;
+                color: #333;
+            }
+            .zone-badge {
+                padding: 3px 8px;
+                border-radius: 12px;
+                font-size: 0.8em;
+                font-weight: 600;
+            }
+            .badge-active { background: #28a745; color: white; }
+            .badge-inactive { background: #6c757d; color: white; }
+            .zone-info {
+                font-size: 0.85em;
+                color: #666;
+                margin: 3px 0;
+            }
+            
+            /* TABLA DE ALERTAS */
+            .alerts-table {
+                max-height: 400px;
+                overflow-y: auto;
+            }
+            .alert-row {
+                display: flex;
+                align-items: center;
+                padding: 12px;
+                background: #f8f9fa;
+                border-radius: 8px;
+                margin-bottom: 8px;
+                gap: 15px;
+            }
+            .alert-row.unread {
                 background: #fff3cd;
+                border-left: 4px solid #ffc107;
             }
-            .alert-item.enter {
-                border-color: #28a745;
-                background: #d4edda;
+            .alert-row.enter {
+                border-left: 4px solid #28a745;
             }
-            .alert-item.exit {
-                border-color: #dc3545;
-                background: #f8d7da;
+            .alert-row.exit {
+                border-left: 4px solid #dc3545;
             }
+            .alert-icon {
+                font-size: 1.5em;
+            }
+            .alert-content {
+                flex: 1;
+            }
+            .alert-title {
+                font-weight: 600;
+                margin-bottom: 3px;
+            }
+            .alert-details {
+                font-size: 0.85em;
+                color: #666;
+            }
+            .alert-actions button {
+                padding: 5px 10px;
+                font-size: 0.8em;
+            }
+            
+            /* LOADING SPINNER */
+            .spinner {
+                border: 3px solid rgba(102, 126, 234, 0.3);
+                border-top: 3px solid #667eea;
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                animation: spin 1s linear infinite;
+                margin: 20px auto;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            
+            /* RESPONSIVE */
             @media (max-width: 968px) {
                 .container {
                     grid-template-columns: 1fr;
                     grid-template-rows: auto 1fr;
                 }
-                .sidebar {
-                    max-height: 300px;
-                }
+                .sidebar { max-height: 300px; }
+                .form-row { grid-template-columns: 1fr; }
+                .btn-group { flex-direction: column; }
             }
         </style>
     </head>
     <body>
         <div class="header">
-            <h1>🎯 GeoTracker Pro Dashboard V3</h1>
-            <p class="subtitle">Sistema de Rastreo en Tiempo Real con Geofencing</p>
+            <div>
+                <h1>🎯 GeoTracker Pro Dashboard V3</h1>
+                <p class="subtitle">Sistema de Rastreo en Tiempo Real con Geofencing</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-success" onclick="showRegisterDeviceModal()">➕ Nuevo Dispositivo</button>
+                <button class="btn btn-info" onclick="showAlertsModal()">🚨 Ver Alertas</button>
+            </div>
         </div>
         
         <div class="container">
             <div class="sidebar">
-                <h3>📱 Dispositivos</h3>
+                <h3>
+                    📱 Dispositivos
+                    <button class="btn btn-sm btn-primary" style="padding: 5px 10px; font-size: 0.8em;" onclick="loadDevices()">🔄</button>
+                </h3>
                 <div id="devices-list">
-                    <p style="text-align: center; color: #666;">Cargando...</p>
+                    <div class="spinner"></div>
                 </div>
-                
-                <button style="
-                    width: 100%;
-                    padding: 12px;
-                    background: #667eea;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    cursor: pointer;
-                    font-weight: 600;
-                    margin-top: 15px;
-                " onclick="window.location.href='/docs'">
-                    ➕ Registrar Dispositivo
-                </button>
             </div>
             
             <div class="main-content">
@@ -1433,40 +1673,239 @@ async def dashboard(username: str = Depends(get_current_user)):
             </div>
         </div>
         
-        <div class="alerts-panel" id="alerts-panel">
-            <h3 style="color: #667eea; margin-bottom: 15px;">🚨 Alertas Recientes</h3>
-            <div id="alerts-content"></div>
+        <!-- MODAL: REGISTRAR DISPOSITIVO -->
+        <div id="registerDeviceModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>➕ Registrar Nuevo Dispositivo</h2>
+                    <button class="close-modal" onclick="closeModal('registerDeviceModal')">&times;</button>
+                </div>
+                <form id="registerDeviceForm" onsubmit="registerDevice(event)">
+                    <div class="form-group">
+                        <label>📞 Número Telefónico *</label>
+                        <input type="text" name="phone" required placeholder="+573001234567">
+                        <small>Incluye código de país (ej: +57 para Colombia)</small>
+                    </div>
+                    <div class="form-group">
+                        <label>👤 Nombre del Propietario *</label>
+                        <input type="text" name="name" required placeholder="Juan Pérez">
+                    </div>
+                    <div class="form-group">
+                        <label>⏱️ Intervalo de Actualización (minutos)</label>
+                        <input type="number" name="update_interval" value="10" min="1" required>
+                        <small>Frecuencia con la que se enviará la ubicación</small>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" name="auto_tracking" id="auto_tracking" checked>
+                        <label for="auto_tracking">🔄 Activar rastreo automático</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">✅ Registrar Dispositivo</button>
+                </form>
+            </div>
+        </div>
+        
+        <!-- MODAL: EDITAR DISPOSITIVO -->
+        <div id="editDeviceModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>✏️ Editar Configuración</h2>
+                    <button class="close-modal" onclick="closeModal('editDeviceModal')">&times;</button>
+                </div>
+                <form id="editDeviceForm" onsubmit="updateDevice(event)">
+                    <input type="hidden" name="phone" id="edit_phone">
+                    <div class="form-group">
+                        <label>👤 Dispositivo</label>
+                        <input type="text" id="edit_name" readonly style="background: #f8f9fa;">
+                    </div>
+                    <div class="form-group">
+                        <label>⏱️ Intervalo de Actualización (minutos)</label>
+                        <input type="number" name="update_interval" id="edit_interval" min="1" required>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" name="auto_tracking" id="edit_auto_tracking">
+                        <label for="edit_auto_tracking">🔄 Rastreo automático activo</label>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" name="is_active" id="edit_is_active">
+                        <label for="edit_is_active">✅ Dispositivo activo</label>
+                    </div>
+                    <div class="btn-group">
+                        <button type="submit" class="btn btn-success">💾 Guardar Cambios</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('editDeviceModal')">Cancelar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- MODAL: GESTIONAR ZONAS -->
+        <div id="zonesModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>🗺️ Zonas de Geofencing</h2>
+                    <button class="close-modal" onclick="closeModal('zonesModal')">&times;</button>
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <strong id="zones_device_name"></strong>
+                    <button class="btn btn-success" style="margin-top: 10px; width: 100%;" onclick="showCreateZoneModal()">➕ Crear Nueva Zona</button>
+                </div>
+                <div class="zone-list" id="zones-list">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- MODAL: CREAR ZONA -->
+        <div id="createZoneModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>➕ Crear Zona de Geofencing</h2>
+                    <button class="close-modal" onclick="closeModal('createZoneModal')">&times;</button>
+                </div>
+                <form id="createZoneForm" onsubmit="createZone(event)">
+                    <input type="hidden" name="phone" id="zone_phone">
+                    <div class="form-group">
+                        <label>🏷️ Nombre de la Zona *</label>
+                        <input type="text" name="name" required placeholder="Casa, Oficina, Colegio...">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>📍 Latitud *</label>
+                            <input type="number" name="latitude" step="any" required placeholder="4.6097">
+                            <small>Click en el mapa para obtener</small>
+                        </div>
+                        <div class="form-group">
+                            <label>📍 Longitud *</label>
+                            <input type="number" name="longitude" step="any" required placeholder="-74.0817">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>📏 Radio (metros) *</label>
+                        <input type="number" name="radius_meters" value="100" min="10" required>
+                        <small>Área de cobertura de la zona</small>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" name="alert_on_enter" id="alert_enter" checked>
+                        <label for="alert_enter">🔔 Alertar al ENTRAR</label>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" name="alert_on_exit" id="alert_exit" checked>
+                        <label for="alert_exit">🔔 Alertar al SALIR</label>
+                    </div>
+                    <div class="btn-group">
+                        <button type="submit" class="btn btn-success">✅ Crear Zona</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('createZoneModal')">Cancelar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- MODAL: VER TODAS LAS ALERTAS -->
+        <div id="alertsModal" class="modal">
+            <div class="modal-content" style="max-width: 700px;">
+                <div class="modal-header">
+                    <h2>🚨 Alertas de Geofencing</h2>
+                    <button class="close-modal" onclick="closeModal('alertsModal')">&times;</button>
+                </div>
+                <div style="margin-bottom: 15px; display: flex; gap: 10px;">
+                    <button class="btn btn-info" onclick="loadAllAlerts(false)">Todas</button>
+                    <button class="btn btn-warning" onclick="loadAllAlerts(true)">Solo No Leídas</button>
+                    <button class="btn btn-success" onclick="markAllAlertsRead()" style="margin-left: auto;">✅ Marcar Todas Leídas</button>
+                </div>
+                <div class="alerts-table" id="alerts-table">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- MODAL: RESULTADO REGISTRO -->
+        <div id="resultModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>✅ Dispositivo Registrado</h2>
+                    <button class="close-modal" onclick="closeModal('resultModal')">&times;</button>
+                </div>
+                <div id="result-content"></div>
+            </div>
+        </div>
+        
+        <!-- NOTIFICACIÓN -->
+        <div id="notification" class="notification">
+            <div class="notification-title" id="notif-title"></div>
+            <div class="notification-message" id="notif-message"></div>
         </div>
         
         <script>
             let map;
             let markers = {};
             let selectedDevice = null;
+            let currentZoneDevice = null;
             
-            // Inicializar mapa
+            // ========== INICIALIZACIÓN ==========
             function initMap() {
                 map = L.map('map').setView([4.6097, -74.0817], 12);
-                
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     attribution: '© OpenStreetMap contributors',
                     maxZoom: 19
                 }).addTo(map);
+                
+                // Click en mapa para obtener coordenadas
+                map.on('click', function(e) {
+                    const lat = e.latlng.lat.toFixed(6);
+                    const lon = e.latlng.lng.toFixed(6);
+                    
+                    // Si el modal de crear zona está abierto, llenar coordenadas
+                    const zoneModal = document.getElementById('createZoneModal');
+                    if (zoneModal.classList.contains('show')) {
+                        document.querySelector('[name="latitude"]').value = lat;
+                        document.querySelector('[name="longitude"]').value = lon;
+                        showNotification('info', 'Coordenadas Capturadas', `Lat: ${lat}, Lon: ${lon}`);
+                    }
+                });
             }
             
-            // Cargar dispositivos
+            // ========== FUNCIONES AUXILIARES ==========
+            function showNotification(type, title, message) {
+                const notif = document.getElementById('notification');
+                notif.className = `notification ${type} show`;
+                document.getElementById('notif-title').textContent = title;
+                document.getElementById('notif-message').textContent = message;
+                
+                setTimeout(() => {
+                    notif.classList.remove('show');
+                }, 4000);
+            }
+            
+            function showModal(modalId) {
+                document.getElementById(modalId).classList.add('show');
+            }
+            
+            function closeModal(modalId) {
+                document.getElementById(modalId).classList.remove('show');
+            }
+            
+            function showRegisterDeviceModal() {
+                document.getElementById('registerDeviceForm').reset();
+                showModal('registerDeviceModal');
+            }
+            
+            // ========== DISPOSITIVOS ==========
             async function loadDevices() {
                 try {
                     const response = await fetch('/api/devices/list');
-                    const data = await response.json();
+                    if (!response.ok) throw new Error('Error al cargar dispositivos');
                     
+                    const data = await response.json();
                     const devicesList = document.getElementById('devices-list');
                     devicesList.innerHTML = '';
                     
                     document.getElementById('total-devices').textContent = data.total;
                     let activeCount = 0;
                     
+                    // Limpiar marcadores existentes
+                    Object.values(markers).forEach(marker => map.removeLayer(marker));
+                    markers = {};
+                    
                     data.devices.forEach(device => {
-                        // Verificar si está activo hoy
                         const isActiveToday = device.last_update && 
                             new Date(device.last_update).toDateString() === new Date().toDateString();
                         
@@ -1474,17 +1913,25 @@ async def dashboard(username: str = Depends(get_current_user)):
                         
                         const card = document.createElement('div');
                         card.className = 'device-card';
-                        card.onclick = () => selectDevice(device);
+                        card.onclick = (e) => {
+                            if (!e.target.closest('.device-actions')) {
+                                selectDevice(device);
+                            }
+                        };
                         
                         card.innerHTML = `
                             <div class="device-name">📱 ${device.name}</div>
-                            <div class="device-info">${device.phone}</div>
-                            <div class="device-info">
-                                🔋 ${device.battery_level ? device.battery_level + '%' : 'N/A'}
-                            </div>
+                            <div class="device-info">📞 ${device.phone}</div>
+                            <div class="device-info">🔋 ${device.battery_level ? device.battery_level + '%' : 'N/A'}</div>
+                            <div class="device-info">⏱️ ${device.update_interval ? (device.update_interval / 60) + ' min' : 'N/A'}</div>
                             <span class="device-status ${isActiveToday ? 'status-active' : 'status-inactive'}">
                                 ${isActiveToday ? '● ACTIVO' : '○ Inactivo'}
                             </span>
+                            <div class="device-actions">
+                                <button class="btn-edit" onclick="editDevice('${device.phone}', event)" title="Editar">✏️</button>
+                                <button class="btn-zones" onclick="showZones('${device.phone}', event)" title="Zonas">🗺️</button>
+                                <button class="btn-delete" onclick="confirmdeleteDevice('${device.phone}', '${device.name}', event)" title="Eliminar">🗑️</button>
+                            </div>
                         `;
                         
                         devicesList.appendChild(card);
@@ -1499,10 +1946,10 @@ async def dashboard(username: str = Depends(get_current_user)):
                     
                 } catch (error) {
                     console.error('Error al cargar dispositivos:', error);
+                    showNotification('error', 'Error', 'No se pudieron cargar los dispositivos');
                 }
             }
             
-            // Agregar marcador al mapa
             function addMarkerToMap(device) {
                 if (markers[device.phone]) {
                     map.removeLayer(markers[device.phone]);
@@ -1510,30 +1957,33 @@ async def dashboard(username: str = Depends(get_current_user)):
                 
                 const marker = L.marker([device.latitude, device.longitude])
                     .bindPopup(`
-                        <div class="popup-title">${device.name}</div>
-                        <div class="popup-info">📱 ${device.phone}</div>
-                        <div class="popup-info">📍 ${device.latitude.toFixed(6)}, ${device.longitude.toFixed(6)}</div>
-                        <div class="popup-info">🎯 Precisión: ±${device.accuracy ? device.accuracy.toFixed(1) : 'N/A'}m</div>
-                        <div class="popup-info">🔋 Batería: ${device.battery_level || 'N/A'}%</div>
-                        <div class="popup-info">⏱️ ${new Date(device.last_update).toLocaleString()}</div>
-                        <button onclick="viewHistory('${device.phone}')" style="
-                            margin-top: 10px;
-                            padding: 8px 15px;
-                            background: #667eea;
-                            color: white;
-                            border: none;
-                            border-radius: 5px;
-                            cursor: pointer;
-                            width: 100%;
-                        ">Ver Historial</button>
+                        <div style="min-width: 200px;">
+                            <div style="font-weight: 600; font-size: 1.1em; color: #667eea; margin-bottom: 10px;">
+                                ${device.name}
+                            </div>
+                            <div style="margin: 5px 0;">📱 ${device.phone}</div>
+                            <div style="margin: 5px 0;">📍 ${device.latitude.toFixed(6)}, ${device.longitude.toFixed(6)}</div>
+                            <div style="margin: 5px 0;">🎯 Precisión: ±${device.accuracy ? device.accuracy.toFixed(1) : 'N/A'}m</div>
+                            <div style="margin: 5px 0;">🔋 Batería: ${device.battery_level || 'N/A'}%</div>
+                            <div style="margin: 5px 0;">⏱️ ${device.last_update ? new Date(device.last_update).toLocaleString() : 'N/A'}</div>
+                            <button onclick="viewHistory('${device.phone}')" style="
+                                margin-top: 10px;
+                                padding: 8px 15px;
+                                background: #667eea;
+                                color: white;
+                                border: none;
+                                border-radius: 5px;
+                                cursor: pointer;
+                                width: 100%;
+                            ">📊 Ver Historial</button>
+                        </div>
                     `)
                     .addTo(map);
                 
                 markers[device.phone] = marker;
             }
             
-            // Seleccionar dispositivo
-            async function selectDevice(device) {
+            function selectDevice(device) {
                 selectedDevice = device;
                 
                 // Actualizar UI
@@ -1547,51 +1997,409 @@ async def dashboard(username: str = Depends(get_current_user)):
                     map.setView([device.latitude, device.longitude], 15);
                     markers[device.phone].openPopup();
                 }
-                
-                // Cargar alertas del dispositivo
-                await loadAlerts(device.phone);
             }
             
-            // Cargar alertas
-            async function loadAlerts(phone = null) {
+            async function registerDevice(event) {
+                event.preventDefault();
+                const form = event.target;
+                const formData = new FormData(form);
+                
+                const data = {
+                    phone: formData.get('phone'),
+                    name: formData.get('name'),
+                    update_interval: parseInt(formData.get('update_interval')) * 60, // Convertir a segundos
+                    auto_tracking: formData.get('auto_tracking') === 'on'
+                };
+                
                 try {
-                    let url = '/api/geofence/alerts?limit=10';
-                    if (phone) url += `&phone=${phone}`;
+                    const response = await fetch('/api/devices/register', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
                     
-                    const response = await fetch(url);
-                    const data = await response.json();
+                    if (!response.ok) throw new Error('Error al registrar dispositivo');
                     
-                    document.getElementById('total-alerts').textContent = data.total;
+                    const result = await response.json();
                     
-                    const alertsContent = document.getElementById('alerts-content');
-                    alertsContent.innerHTML = '';
+                    closeModal('registerDeviceModal');
                     
-                    if (data.total > 0) {
-                        document.getElementById('alerts-panel').classList.add('show');
-                        
-                        data.alerts.slice(0, 5).forEach(alert => {
-                            const item = document.createElement('div');
-                            item.className = `alert-item ${alert.alert_type.toLowerCase()}`;
-                            item.innerHTML = `
-                                <strong>${alert.alert_type === 'ENTER' ? '➡️ ENTRADA' : '⬅️ SALIDA'}</strong><br>
-                                <small>${alert.device_name}</small><br>
-                                <small>Zona: ${alert.zone_name}</small><br>
-                                <small>${new Date(alert.timestamp).toLocaleString()}</small>
-                            `;
-                            alertsContent.appendChild(item);
-                        });
-                    }
+                    // Mostrar resultado con link
+                    const resultContent = document.getElementById('result-content');
+                    resultContent.innerHTML = `
+                        <div style="text-align: center;">
+                            <div style="font-size: 3em; margin-bottom: 20px;">✅</div>
+                            <h3 style="color: #28a745; margin-bottom: 20px;">¡Dispositivo Registrado!</h3>
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+                                <p style="margin: 10px 0;"><strong>Nombre:</strong> ${result.name}</p>
+                                <p style="margin: 10px 0;"><strong>Teléfono:</strong> ${result.phone}</p>
+                                <p style="margin: 10px 0;"><strong>Intervalo:</strong> ${result.update_interval / 60} minutos</p>
+                            </div>
+                            <div style="background: #fff3cd; padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 4px solid #ffc107;">
+                                <strong>📱 Link de Rastreo:</strong>
+                                <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 5px; word-break: break-all; font-family: monospace; font-size: 0.9em;">
+                                    ${result.tracking_url}
+                                </div>
+                                <button onclick="copyToClipboard('${result.tracking_url}')" style="
+                                    margin-top: 10px;
+                                    padding: 10px 20px;
+                                    background: #667eea;
+                                    color: white;
+                                    border: none;
+                                    border-radius: 5px;
+                                    cursor: pointer;
+                                    width: 100%;
+                                    font-weight: 600;
+                                ">📋 Copiar Link</button>
+                            </div>
+                            <p style="color: #666; font-size: 0.9em;">
+                                ${result.instructions}
+                            </p>
+                        </div>
+                    `;
+                    
+                    showModal('resultModal');
+                    loadDevices();
+                    showNotification('success', 'Éxito', 'Dispositivo registrado correctamente');
+                    
                 } catch (error) {
-                    console.error('Error al cargar alertas:', error);
+                    console.error('Error:', error);
+                    showNotification('error', 'Error', 'No se pudo registrar el dispositivo');
                 }
             }
             
-            // Ver historial de dispositivo
-            function viewHistory(phone) {
-                window.open(`/history/${phone}`, '_blank');
+            function copyToClipboard(text) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showNotification('success', 'Copiado', 'Link copiado al portapapeles');
+                });
             }
             
-            // Cargar estadísticas generales
+            function editDevice(phone, event) {
+                event.stopPropagation();
+                
+                // Buscar datos del dispositivo
+                fetch('/api/devices/list')
+                    .then(r => r.json())
+                    .then(data => {
+                        const device = data.devices.find(d => d.phone === phone);
+                        if (!device) return;
+                        
+                        document.getElementById('edit_phone').value = device.phone;
+                        document.getElementById('edit_name').value = device.name;
+                        document.getElementById('edit_interval').value = device.update_interval / 60;
+                        document.getElementById('edit_auto_tracking').checked = device.auto_tracking;
+                        document.getElementById('edit_is_active').checked = device.is_active;
+                        
+                        showModal('editDeviceModal');
+                    });
+            }
+            
+            async function updateDevice(event) {
+                event.preventDefault();
+                const form = event.target;
+                const formData = new FormData(form);
+                
+                const phone = formData.get('phone');
+                const params = new URLSearchParams({
+                    update_interval: parseInt(formData.get('update_interval')) * 60,
+                    auto_tracking: formData.get('auto_tracking') === 'on',
+                    is_active: formData.get('is_active') === 'on'
+                });
+                
+                try {
+                    const response = await fetch(`/api/devices/${encodeURIComponent(phone)}/update-settings?${params}`, {
+                        method: 'POST'
+                    });
+                    
+                    if (!response.ok) throw new Error('Error al actualizar');
+                    
+                    closeModal('editDeviceModal');
+                    loadDevices();
+                    showNotification('success', 'Actualizado', 'Configuración guardada correctamente');
+                    
+                } catch (error) {
+                    console.error('Error:', error);
+                    showNotification('error', 'Error', 'No se pudo actualizar la configuración');
+                }
+            }
+            
+            function confirmDeleteDevice(phone, name, event) {
+                event.stopPropagation();
+                
+                if (confirm(`¿Estás seguro de eliminar el dispositivo "${name}"?\n\n⚠️ Se borrarán TODOS los datos: ubicaciones, zonas y alertas.\n\nEsta acción NO se puede deshacer.`)) {
+                    deleteDevice(phone);
+                }
+            }
+            
+            async function deleteDevice(phone) {
+                try {
+                    const response = await fetch(`/api/devices/${encodeURIComponent(phone)}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (!response.ok) throw new Error('Error al eliminar');
+                    
+                    loadDevices();
+                    showNotification('success', 'Eliminado', 'Dispositivo eliminado correctamente');
+                    
+                } catch (error) {
+                    console.error('Error:', error);
+                    showNotification('error', 'Error', 'No se pudo eliminar el dispositivo');
+                }
+            }
+            
+            function viewHistory(phone) {
+                window.open(`/history/${encodeURIComponent(phone)}`, '_blank');
+            }
+            
+            // ========== ZONAS DE GEOFENCING ==========
+            function showZones(phone, event) {
+                event.stopPropagation();
+                currentZoneDevice = phone;
+                
+                // Buscar nombre del dispositivo
+                fetch('/api/devices/list')
+                    .then(r => r.json())
+                    .then(data => {
+                        const device = data.devices.find(d => d.phone === phone);
+                        document.getElementById('zones_device_name').textContent = 
+                            `Zonas de: ${device ? device.name : phone}`;
+                    });
+                
+                loadZones(phone);
+                showModal('zonesModal');
+            }
+            
+            async function loadZones(phone) {
+                const zonesList = document.getElementById('zones-list');
+                zonesList.innerHTML = '<div class="spinner"></div>';
+                
+                try {
+                    const response = await fetch(`/api/geofence/list/${encodeURIComponent(phone)}`);
+                    if (!response.ok) throw new Error('Error al cargar zonas');
+                    
+                    const data = await response.json();
+                    zonesList.innerHTML = '';
+                    
+                    if (data.total === 0) {
+                        zonesList.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No hay zonas configuradas</p>';
+                        return;
+                    }
+                    
+                    data.zones.forEach(zone => {
+                        const zoneItem = document.createElement('div');
+                        zoneItem.className = `zone-item ${zone.active ? '' : 'inactive'}`;
+                        zoneItem.innerHTML = `
+                            <div class="zone-header">
+                                <div class="zone-name">🗺️ ${zone.name}</div>
+                                <span class="zone-badge ${zone.active ? 'badge-active' : 'badge-inactive'}">
+                                    ${zone.active ? '✅ ACTIVA' : '⏸️ PAUSADA'}
+                                </span>
+                            </div>
+                            <div class="zone-info">📍 Centro: ${zone.latitude.toFixed(6)}, ${zone.longitude.toFixed(6)}</div>
+                            <div class="zone-info">📏 Radio: ${zone.radius_meters}m</div>
+                            <div class="zone-info">
+                                🔔 Alertas: 
+                                ${zone.alert_on_enter ? '➡️ Entrada' : ''} 
+                                ${zone.alert_on_enter && zone.alert_on_exit ? 'y' : ''}
+                                ${zone.alert_on_exit ? '⬅️ Salida' : ''}
+                            </div>
+                            <button onclick="showZoneOnMap(${zone.latitude}, ${zone.longitude}, ${zone.radius_meters})" style="
+                                margin-top: 10px;
+                                padding: 8px;
+                                background: #667eea;
+                                color: white;
+                                border: none;
+                                border-radius: 5px;
+                                cursor: pointer;
+                                width: 100%;
+                                font-size: 0.9em;
+                            ">📍 Ver en Mapa</button>
+                        `;
+                        zonesList.appendChild(zoneItem);
+                    });
+                    
+                } catch (error) {
+                    console.error('Error:', error);
+                    zonesList.innerHTML = '<p style="text-align: center; color: red;">Error al cargar zonas</p>';
+                }
+            }
+            
+            function showZoneOnMap(lat, lon, radius) {
+                map.setView([lat, lon], 15);
+                
+                // Dibujar círculo temporal
+                const circle = L.circle([lat, lon], {
+                    radius: radius,
+                    color: '#667eea',
+                    fillColor: '#667eea',
+                    fillOpacity: 0.2
+                }).addTo(map);
+                
+                // Remover después de 5 segundos
+                setTimeout(() => {
+                    map.removeLayer(circle);
+                }, 5000);
+                
+                closeModal('zonesModal');
+            }
+            
+            function showCreateZoneModal() {
+                document.getElementById('zone_phone').value = currentZoneDevice;
+                document.getElementById('createZoneForm').reset();
+                document.getElementById('zone_phone').value = currentZoneDevice;
+                
+                // Si hay un dispositivo seleccionado, usar su ubicación
+                if (selectedDevice && selectedDevice.latitude && selectedDevice.longitude) {
+                    document.querySelector('[name="latitude"]').value = selectedDevice.latitude;
+                    document.querySelector('[name="longitude"]').value = selectedDevice.longitude;
+                }
+                
+                closeModal('zonesModal');
+                showModal('createZoneModal');
+            }
+            
+            async function createZone(event) {
+                event.preventDefault();
+                const form = event.target;
+                const formData = new FormData(form);
+                
+                const data = {
+                    name: formData.get('name'),
+                    phone: formData.get('phone'),
+                    latitude: parseFloat(formData.get('latitude')),
+                    longitude: parseFloat(formData.get('longitude')),
+                    radius_meters: parseFloat(formData.get('radius_meters')),
+                    alert_on_enter: formData.get('alert_on_enter') === 'on',
+                    alert_on_exit: formData.get('alert_on_exit') === 'on',
+                    active: true
+                };
+                
+                try {
+                    const response = await fetch('/api/geofence/create', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    
+                    if (!response.ok) throw new Error('Error al crear zona');
+                    
+                    closeModal('createZoneModal');
+                    showNotification('success', 'Zona Creada', 'La zona de geofencing se creó correctamente');
+                    
+                    // Volver a mostrar modal de zonas
+                    setTimeout(() => {
+                        showZones(data.phone, { stopPropagation: () => {} });
+                    }, 500);
+                    
+                } catch (error) {
+                    console.error('Error:', error);
+                    showNotification('error', 'Error', 'No se pudo crear la zona');
+                }
+            }
+            
+            // ========== ALERTAS ==========
+            function showAlertsModal() {
+                loadAllAlerts(false);
+                showModal('alertsModal');
+            }
+            
+            async function loadAllAlerts(unreadOnly = false) {
+                const alertsTable = document.getElementById('alerts-table');
+                alertsTable.innerHTML = '<div class="spinner"></div>';
+                
+                try {
+                    const params = new URLSearchParams({
+                        limit: 50,
+                        unread_only: unreadOnly
+                    });
+                    
+                    const response = await fetch(`/api/geofence/alerts?${params}`);
+                    if (!response.ok) throw new Error('Error al cargar alertas');
+                    
+                    const data = await response.json();
+                    alertsTable.innerHTML = '';
+                    
+                    if (data.total === 0) {
+                        alertsTable.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No hay alertas</p>';
+                        return;
+                    }
+                    
+                    data.alerts.forEach(alert => {
+                        const alertRow = document.createElement('div');
+                        const typeClass = alert.alert_type.toLowerCase();
+                        const unreadClass = alert.read ? '' : 'unread';
+                        
+                        alertRow.className = `alert-row ${typeClass} ${unreadClass}`;
+                        alertRow.innerHTML = `
+                            <div class="alert-icon">
+                                ${alert.alert_type === 'ENTER' ? '➡️' : '⬅️'}
+                            </div>
+                            <div class="alert-content">
+                                <div class="alert-title">
+                                    ${alert.alert_type === 'ENTER' ? 'ENTRADA' : 'SALIDA'} - ${alert.zone_name}
+                                </div>
+                                <div class="alert-details">
+                                    📱 ${alert.device_name} (${alert.phone})<br>
+                                    ⏱️ ${new Date(alert.timestamp).toLocaleString()}<br>
+                                    ${alert.read ? '✅ Leída' : '🔔 No leída'}
+                                </div>
+                            </div>
+                            <div class="alert-actions">
+                                ${!alert.read ? `<button class="btn btn-warning" onclick="markAlertRead(${alert.id})">✅ Marcar Leída</button>` : ''}
+                            </div>
+                        `;
+                        alertsTable.appendChild(alertRow);
+                    });
+                    
+                    document.getElementById('total-alerts').textContent = data.total;
+                    
+                } catch (error) {
+                    console.error('Error:', error);
+                    alertsTable.innerHTML = '<p style="text-align: center; color: red;">Error al cargar alertas</p>';
+                }
+            }
+            
+            async function markAlertRead(alertId) {
+                try {
+                    const response = await fetch(`/api/geofence/alerts/${alertId}/mark-read`, {
+                        method: 'POST'
+                    });
+                    
+                    if (!response.ok) throw new Error('Error al marcar alerta');
+                    
+                    loadAllAlerts(false);
+                    showNotification('success', 'Actualizado', 'Alerta marcada como leída');
+                    
+                } catch (error) {
+                    console.error('Error:', error);
+                    showNotification('error', 'Error', 'No se pudo actualizar la alerta');
+                }
+            }
+            
+            async function markAllAlertsRead() {
+                if (!confirm('¿Marcar TODAS las alertas como leídas?')) return;
+                
+                try {
+                    // Obtener todas las alertas no leídas
+                    const response = await fetch('/api/geofence/alerts?unread_only=true&limit=1000');
+                    const data = await response.json();
+                    
+                    // Marcar cada una
+                    for (const alert of data.alerts) {
+                        await fetch(`/api/geofence/alerts/${alert.id}/mark-read`, { method: 'POST' });
+                    }
+                    
+                    loadAllAlerts(false);
+                    showNotification('success', 'Actualizado', `${data.total} alertas marcadas como leídas`);
+                    
+                } catch (error) {
+                    console.error('Error:', error);
+                    showNotification('error', 'Error', 'No se pudieron actualizar las alertas');
+                }
+            }
+            
+            // ========== ESTADÍSTICAS ==========
             async function loadStats() {
                 try {
                     const response = await fetch('/api/locations/stats');
@@ -1602,21 +2410,35 @@ async def dashboard(username: str = Depends(get_current_user)):
                 }
             }
             
-            // Inicializar
+            // ========== INICIALIZACIÓN Y AUTO-REFRESH ==========
             window.addEventListener('load', () => {
                 initMap();
                 loadDevices();
                 loadStats();
-                loadAlerts();
                 
                 // Auto-refresh cada 30 segundos
                 setInterval(() => {
                     loadDevices();
                     loadStats();
-                    if (selectedDevice) {
-                        loadAlerts(selectedDevice.phone);
-                    }
                 }, 30000);
+            });
+            
+            // Cerrar modales con ESC
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    document.querySelectorAll('.modal.show').forEach(modal => {
+                        modal.classList.remove('show');
+                    });
+                }
+            });
+            
+            // Cerrar modales al hacer click fuera
+            document.querySelectorAll('.modal').forEach(modal => {
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) {
+                        modal.classList.remove('show');
+                    }
+                });
             });
         </script>
     </body>
