@@ -1,7 +1,13 @@
 services:
   - type: web
-    name: ip-tracker
+    name: geotracker-pro
     env: python
     plan: free
-    buildCommand: ""
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    region: oregon
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: TELEGRAM_BOT_TOKEN
+        value: "TU_BOT_TOKEN_AQUI"

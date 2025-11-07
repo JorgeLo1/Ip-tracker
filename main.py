@@ -83,8 +83,11 @@ class StatsResponse(BaseModel):
 # CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════════
 
-TELEGRAM_BOT_TOKEN = "TU_BOT_TOKEN"  # Obtener en @BotFather
+import os
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_BOT_TOKEN")  # Obtener en @BotFather
 DATABASE = "tracker.db"
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:10000")  # URL de producción
 
 # ═══════════════════════════════════════════════════════════════════
 # BASE DE DATOS
@@ -261,8 +264,11 @@ async def crear_enlace_trampa(
     conn.commit()
     conn.close()
     
-    # En producción, cambiar por tu dominio real
-    tracking_url = f"http://localhost:10000/t/{link_id}"
+    # Generar URL según el entorno
+    if BASE_URL.startswith("http://localhost"):
+        tracking_url = f"{BASE_URL}/t/{link_id}"
+    else:
+        tracking_url = f"{BASE_URL}/t/{link_id}"
     
     return LinkResponse(
         success=True,
